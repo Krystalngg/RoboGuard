@@ -18,13 +18,22 @@ class FrameAttributionService:
     """Computes and evaluates temporal attribution for video anomaly predictions."""
 
     @staticmethod
+    def _get_bag_score(model: Any, features: np.ndarray) -> float:
+        if hasattr(model, "predict_bag"):
+            mean_bag, _, _ = model.predict_bag(features)
+            return float(mean_bag)
+        win_scores = model.predict_window_scores(features)
+        return float(model.aggregate_video_score(win_scores))
+
+    @staticmethod
     def compute_leave_one_out_importance(
-        model: MILAnomalyHead,
+        model: Any,
         temporal_features: np.ndarray,
     ) -> List[float]:
         """Calculates causal importance of each temporal window via leave-one-out perturbation.
 
         Importance I_j = bag_score(full) - bag_score(features without window j).
+        Attributes the actual model or ensemble decision function.
         """
         if temporal_features.ndim != 2:
             raise ValueError(f"Expected 2D array (T, D), got {temporal_features.shape}")
@@ -34,8 +43,7 @@ class FrameAttributionService:
             return [1.0]
 
         # Base prediction
-        base_win_scores = model.predict_window_scores(temporal_features)
-        base_bag_score = model.aggregate_video_score(base_win_scores)
+        base_bag_score = FrameAttributionService._get_bag_score(model, temporal_features)
 
         importances: List[float] = []
 
@@ -45,8 +53,7 @@ class FrameAttributionService:
             mask[j] = False
             perturbed_features = temporal_features[mask]
 
-            p_win_scores = model.predict_window_scores(perturbed_features)
-            p_bag_score = model.aggregate_video_score(p_win_scores)
+            p_bag_score = FrameAttributionService._get_bag_score(model, perturbed_features)
 
             # Drop in score when window j is removed
             drop = base_bag_score - p_bag_score
@@ -56,7 +63,7 @@ class FrameAttributionService:
 
     @staticmethod
     def evaluate_removal_versus_random(
-        model: MILAnomalyHead,
+        model: Any,
         temporal_features: np.ndarray,
         remove_k: int = 2,
         num_random_trials: int = 10,
@@ -66,11 +73,6 @@ class FrameAttributionService:
 
         A faithful attribution method should exhibit significantly greater drop when
         removing top-k important windows than when removing random windows of equal size.
-
-        Note on bag-length confound:
-        Removing windows reduces the bag length from T to T - remove_k, which can shift
-        the discrete top-k ceiling count. Controlled zero-replacement or fixed-k evaluation
-        should be noted as a confound alongside leave-one-out removal.
         """
         t_windows = len(temporal_features)
         if t_windows <= remove_k:
@@ -81,8 +83,7 @@ class FrameAttributionService:
                 "faithful": True,
             }
 
-        base_scores = model.predict_window_scores(temporal_features)
-        base_bag = model.aggregate_video_score(base_scores)
+        base_bag = FrameAttributionService._get_bag_score(model, temporal_features)
 
         # 1. Top-k removal
         importances = FrameAttributionService.compute_leave_one_out_importance(model, temporal_features)
@@ -91,7 +92,7 @@ class FrameAttributionService:
         mask_top = np.ones(t_windows, dtype=bool)
         mask_top[top_indices] = False
         feat_no_top = temporal_features[mask_top]
-        bag_no_top = model.aggregate_video_score(model.predict_window_scores(feat_no_top))
+        bag_no_top = FrameAttributionService._get_bag_score(model, feat_no_top)
         top_k_drop = max(0.0, base_bag - bag_no_top)
 
         # 2. Random removal controls
@@ -103,7 +104,7 @@ class FrameAttributionService:
             mask_rand = np.ones(t_windows, dtype=bool)
             mask_rand[rand_indices] = False
             feat_no_rand = temporal_features[mask_rand]
-            bag_no_rand = model.aggregate_video_score(model.predict_window_scores(feat_no_rand))
+            bag_no_rand = FrameAttributionService._get_bag_score(model, feat_no_rand)
             random_drops.append(max(0.0, base_bag - bag_no_rand))
 
         mean_random_drop = float(np.mean(random_drops))

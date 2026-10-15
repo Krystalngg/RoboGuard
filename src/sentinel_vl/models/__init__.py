@@ -7,10 +7,14 @@ from sentinel_vl.models.base import (
     BaseVisualEncoder,
 )
 
+from sentinel_vl.models.encoders import SemanticTextEncoder, TorchVisualEncoder
+
 __all__ = [
     "BaseVisualEncoder",
     "BaseTemporalEncoder",
     "BaseAlignmentHead",
     "BaseAnomalyHead",
+    "TorchVisualEncoder",
+    "SemanticTextEncoder",
 ]
 
