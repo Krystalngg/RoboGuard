@@ -117,11 +117,13 @@ def test_roc_tie_order_invariance():
     perm1 = [0, 1, 2, 3, 4]
     perm2 = [0, 3, 2, 1, 4]
 
-    roc1, pr1 = compute_roc_and_pr_auc(scores[perm1], labels[perm1])
-    roc2, pr2 = compute_roc_and_pr_auc(scores[perm2], labels[perm2])
+    res1 = compute_roc_and_pr_auc(labels[perm1], scores[perm1])
+    res2 = compute_roc_and_pr_auc(labels[perm2], scores[perm2])
 
-    assert roc1 == pytest.approx(roc2, abs=1e-6)
-    assert pr1 == pytest.approx(pr2, abs=1e-6)
+    assert isinstance(res1["roc_auc"], float)
+    assert isinstance(res1["pr_auc"], float)
+    assert res1["roc_auc"] == pytest.approx(res2["roc_auc"], abs=1e-6)
+    assert res1["pr_auc"] == pytest.approx(res2["pr_auc"], abs=1e-6)
 
 
 def test_head_ensemble_requires_multiple_heads():

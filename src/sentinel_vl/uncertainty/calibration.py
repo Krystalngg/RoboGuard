@@ -27,17 +27,64 @@ from sentinel_vl.uncertainty.contracts import (
 
 @dataclass
 class CalibrationArtifact:
-    """Versioned artifact capturing temperature scaling fit provenance."""
+    """Versioned artifact capturing temperature scaling fit provenance and model compatibility."""
     temperature: float
     aggregation_definition: str = "top_k_mean"
     calibrator_version: str = "1.0.0"
     head_checkpoint_hashes: List[str] = field(default_factory=list)
     calibration_partition_hash: Optional[str] = None
+    encoder_version: Optional[str] = None
+    feature_dim: Optional[int] = None
+    top_k_ratio: Optional[float] = None
+    min_k: Optional[int] = None
+    ensemble_composition: Optional[List[str]] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __post_init__(self) -> None:
         if self.temperature <= 0:
             raise ValueError(f"Temperature must be strictly positive, got {self.temperature}")
+
+    def validate_compatibility(
+        self,
+        expected_aggregation: str = "top_k_mean",
+        expected_head_hashes: Optional[List[str]] = None,
+        expected_encoder_version: Optional[str] = None,
+        expected_feature_dim: Optional[int] = None,
+        expected_top_k_ratio: Optional[float] = None,
+        expected_min_k: Optional[int] = None,
+    ) -> None:
+        """Validates that this calibration artifact matches model and pipeline requirements."""
+        if self.aggregation_definition != expected_aggregation:
+            raise ValueError(
+                f"Incompatible calibration artifact aggregation: expected '{expected_aggregation}', "
+                f"got '{self.aggregation_definition}'"
+            )
+        if expected_head_hashes and self.head_checkpoint_hashes:
+            if not any(h in self.head_checkpoint_hashes for h in expected_head_hashes):
+                raise ValueError(
+                    f"Incompatible calibration artifact: current head hash not in artifact "
+                    f"checkpoint hashes {self.head_checkpoint_hashes}"
+                )
+        if expected_encoder_version and self.encoder_version and self.encoder_version != expected_encoder_version:
+            raise ValueError(
+                f"Incompatible encoder version in calibration artifact: expected '{expected_encoder_version}', "
+                f"got '{self.encoder_version}'"
+            )
+        if expected_feature_dim and self.feature_dim and self.feature_dim != expected_feature_dim:
+            raise ValueError(
+                f"Incompatible feature dimension in calibration artifact: expected {expected_feature_dim}, "
+                f"got {self.feature_dim}"
+            )
+        if expected_top_k_ratio is not None and self.top_k_ratio is not None and abs(self.top_k_ratio - expected_top_k_ratio) > 1e-4:
+            raise ValueError(
+                f"Incompatible top_k_ratio in calibration artifact: expected {expected_top_k_ratio}, "
+                f"got {self.top_k_ratio}"
+            )
+        if expected_min_k is not None and self.min_k is not None and self.min_k != expected_min_k:
+            raise ValueError(
+                f"Incompatible min_k in calibration artifact: expected {expected_min_k}, "
+                f"got {self.min_k}"
+            )
 
     def save(self, path: str | Path) -> None:
         p = Path(path)
@@ -68,6 +115,13 @@ class HeadEnsemble:
         if heads is not None:
             if len(heads) < 2:
                 raise ValueError("HeadEnsemble requires at least 2 heads to quantify predictive disagreement.")
+            # Verify model independence: reject duplicate weights/hashes
+            hashes = [h.compute_weights_hash() for h in heads]
+            if len(set(hashes)) < len(heads):
+                raise ValueError(
+                    "HeadEnsemble rejects duplicate models with identical weights/hashes. "
+                    "Distinct independently trained models are required to quantify predictive disagreement."
+                )
             self.heads = heads
         else:
             self.heads = [
@@ -223,18 +277,31 @@ class SelectiveDecisionService:
         high_threshold: float = 0.70,
         low_threshold: float = 0.30,
         max_disagreement: float = 0.12,
+        policy: str = "conservative_production",
+        require_calibration: bool = True,
+        require_disagreement: bool = True,
     ) -> None:
         self.high_threshold = high_threshold
         self.low_threshold = low_threshold
         self.max_disagreement = max_disagreement
+        self.policy = policy
+        self.require_calibration = require_calibration
+        self.require_disagreement = require_disagreement
 
     def decide(
         self,
         score_or_calibrated_prob: float,
-        disagreement: float,
+        disagreement: Optional[float] = None,
+        is_calibrated: bool = True,
     ) -> str:
         """Returns 'accepted_normal', 'accepted_anomalous', or 'review_required'."""
-        if disagreement > self.max_disagreement:
+        if self.policy == "conservative_production":
+            if self.require_calibration and not is_calibrated:
+                return "review_required"
+            if self.require_disagreement and disagreement is None:
+                return "review_required"
+
+        if disagreement is not None and disagreement > self.max_disagreement:
             return "review_required"
 
         if score_or_calibrated_prob >= self.high_threshold:

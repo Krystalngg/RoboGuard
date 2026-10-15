@@ -75,8 +75,8 @@ desktop.ini
 .streamlit/secrets.toml
 
 # Media, datasets, checkpoints, and heavy ML artifacts
-data/
-datasets/
+/data/
+/datasets/
 checkpoints/
 weights/
 embeddings/

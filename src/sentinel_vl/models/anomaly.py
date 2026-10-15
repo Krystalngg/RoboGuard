@@ -115,6 +115,18 @@ class MILAnomalyHead(BaseAnomalyHead):
         total_loss = float(bce_loss + lambda_smooth * smooth_loss + lambda_sparse * sparse_loss)
         return total_loss, float(bce_loss), smooth_loss
 
+    def compute_weights_hash(self) -> str:
+        """Computes deterministic SHA-256 hash of model weights and bias."""
+        payload = {
+            "feature_dim": self.feature_dim,
+            "top_k_ratio": self.top_k_ratio,
+            "min_k": self.min_k,
+            "bias": round(float(self.bias), 7),
+            "weights": np.round(self.weights, 7).tolist(),
+        }
+        content = json.dumps(payload, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(content).hexdigest()
+
     def save_checkpoint(self, checkpoint_path: str | Path) -> str:
         """Saves model weights and metadata to a structured JSON checkpoint."""
         path = Path(checkpoint_path)
@@ -141,8 +153,13 @@ class MILAnomalyHead(BaseAnomalyHead):
         return checksum
 
     @classmethod
-    def load_checkpoint(cls, checkpoint_path: str | Path, verify_checksum: bool = True) -> MILAnomalyHead:
-        """Loads model weights and validates SHA-256 checksum integrity."""
+    def load_checkpoint(
+        cls,
+        checkpoint_path: str | Path,
+        verify_checksum: bool = True,
+        expected_checksum: Optional[str] = None,
+    ) -> MILAnomalyHead:
+        """Loads model weights, enforces required SHA-256, and validates checksum integrity."""
         path = Path(checkpoint_path)
         if not path.is_file():
             raise FileNotFoundError(f"Checkpoint file not found: {path}")
@@ -153,15 +170,25 @@ class MILAnomalyHead(BaseAnomalyHead):
         if data.get("model_type") != "MILAnomalyHead":
             raise ValueError(f"Invalid model_type in checkpoint: {data.get('model_type')}")
 
-        if verify_checksum and "sha256" in data:
-            expected_checksum = data["sha256"]
+        if verify_checksum:
+            if "sha256" not in data:
+                raise ValueError(
+                    f"Checkpoint integrity verification failed: checkpoint '{path}' lacks required 'sha256' field. "
+                    "Unsigned/unverified artifacts are rejected in production."
+                )
+            checksum_in_file = data["sha256"]
             payload = {k: v for k, v in data.items() if k != "sha256"}
             content_bytes = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
             actual_checksum = hashlib.sha256(content_bytes).hexdigest()
-            if actual_checksum != expected_checksum:
+            if actual_checksum != checksum_in_file:
                 raise ValueError(
-                    f"Checkpoint integrity verification failed: expected {expected_checksum}, "
+                    f"Checkpoint integrity verification failed: expected {checksum_in_file}, "
                     f"calculated {actual_checksum}. Checkpoint may be corrupted."
+                )
+            if expected_checksum is not None and actual_checksum != expected_checksum:
+                raise ValueError(
+                    f"Checkpoint integrity verification failed: pinned checksum mismatch. "
+                    f"Expected {expected_checksum}, calculated {actual_checksum}."
                 )
 
         head = cls(

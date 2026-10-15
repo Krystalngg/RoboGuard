@@ -30,6 +30,8 @@ class GroundedReportGenerator:
         calibration_version: str = "uncalibrated",
         model_version: str = "sentinel-vl-m5",
         provenance: str = "synthetic_demo",
+        evidence_frame_paths: Optional[List[str]] = None,
+        provenance_details: Optional[Dict[str, str]] = None,
     ) -> IncidentReport:
         """Constructs and validates an honest incident report without fabricated visual actions."""
         start_sec, end_sec = peak_interval
@@ -83,6 +85,8 @@ class GroundedReportGenerator:
             provenance=provenance,
             calibrated_video_probability=calibrated_probability,
             ensemble_disagreement=disagreement,
+            evidence_frame_paths=evidence_frame_paths if valid_evidence else None,
+            provenance_details=provenance_details,
         )
 
         if valid_evidence and candidate_frame_pool:
