@@ -6,9 +6,15 @@ import os
 from pathlib import Path
 from typing import Any, List, Optional, Union
 import numpy as np
-from PIL import Image
 
 from sentinel_vl.models.base import BaseVisualEncoder
+
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    Image = None  # type: ignore
+    HAS_PIL = False
 
 try:
     import torch
@@ -28,8 +34,8 @@ class TorchVisualEncoder(BaseVisualEncoder):
         weights_path: Optional[str | Path] = None,
         device: str = "cpu",
     ) -> None:
-        if not HAS_TORCH:
-            raise RuntimeError("PyTorch and torchvision are required for TorchVisualEncoder.")
+        if not HAS_TORCH or not HAS_PIL:
+            raise RuntimeError("PyTorch, torchvision, and Pillow are required for TorchVisualEncoder.")
 
         self.feature_dim = feature_dim
         self.encoder_version = f"resnet50-proj{feature_dim}-v1"
